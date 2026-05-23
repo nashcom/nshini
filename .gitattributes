@@ -1,0 +1,7 @@
+# Enforce LF line endings for all text files
+* text=auto eol=lf
+
+# Treat binaries as binary
+*.exe binary
+*.o   binary
+*.pdb binary
