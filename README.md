@@ -8,6 +8,16 @@ launch an editor with automatic round-trip conversion. When no file is specified
 operates on the active `notes.ini` of the running Domino instance.
 
 
+## TL;DR
+
+- `notes.ini` is stored in **LMBCS** — opening it in a UTF-8 editor and saving silently corrupts any non-ASCII values
+- `nshini edit notes.ini` decodes to UTF-8, opens your editor, re-encodes to LMBCS after save — the editor never sees raw LMBCS
+- `nshini diff notes.ini backup.ini` compares two ini files with correct character decoding
+- `nshini -` dumps the active `notes.ini` as readable UTF-8 to stdout
+- With no prameters it edits the notes.ini
+- Runs on Linux and Windows; uses `OSTranslate32` from the Domino C API for byte-identical conversion
+
+
 ## Commands
 
 ```
@@ -15,7 +25,7 @@ nshini convert <file>              auto-convert based on extension
 nshini decode  <input> [output]    convert LMBCS to UTF-8
 nshini encode  <input> [output]    convert UTF-8 to LMBCS
 nshini edit    <file> [editor]     edit file; auto-converts .ini to/from UTF-8
-nshini diff    <file1> [file2]     diff files (Linux; decodes .ini to UTF-8 first)
+nshini diff    <file1> [file2]     diff files (decodes .ini to UTF-8 first)
 ```
 
 ```
@@ -86,7 +96,17 @@ If `nshini_backup=1` is set, `nshini` writes a `<original>.bak` copy of the LMBC
 The edit file is named `<original>.utf8.edit` (e.g. `notes.ini.utf8.edit`) and is
 removed after a successful encode-back. If the encode step fails the file is preserved.
 
-### diff (Linux only)
+If `nshini_confirm=1` is set (or `-confirm` is passed on the command line), `nshini`
+shows a diff of the changes after the editor closes and asks for confirmation before
+writing them back to LMBCS. Answering `n` discards the edit file without touching the
+original. This is useful when editing a live `notes.ini` where an accidental save could
+cause problems.
+
+Confirm only applies to `.ini` (LMBCS) files — the round-trip through a UTF-8 temp file
+is what makes the before/after snapshot possible. Non-`.ini` files are opened directly
+by the editor and confirm is skipped.
+
+### diff
 
 Compares two files after decoding any `.ini` inputs to UTF-8. The second file
 is optional; it defaults to the active notes.ini.
@@ -100,6 +120,33 @@ nshini diff -                    # diff stdin against active notes.ini
 
 `.ini` files are decoded to a `.utf8.diff` temp file for the diff call and
 removed afterwards. The diff output goes directly to the terminal.
+
+On Windows, the diff tool is selected in this order:
+
+1. `nshini_diff` in `notes.ini` (explicit override)
+2. Notepad++ with ComparePlus plugin — side-by-side visual diff (auto-detected)
+3. `diff.exe` bundled with Git for Windows — clean GNU diff output (auto-detected from git's install tree)
+4. `git --no-pager diff --no-index` — fallback if `diff.exe` is not found in the expected location
+5. `wsl` — uses `wsl diff` with automatic Windows-to-WSL path conversion (`D:\...` → `/mnt/d/...`)
+
+**Recommendation: install [Notepad++](https://notepad-plus-plus.org/) with the
+[ComparePlus plugin](https://github.com/pnedev/comparePlus).**
+ComparePlus gives a side-by-side visual diff with syntax highlighting directly inside
+Notepad++. `nshini` detects it automatically — no configuration needed. Install
+Notepad++ first, then add ComparePlus via the Notepad++ Plugin Manager
+(*Plugins → Plugins Admin → ComparePlus*).
+
+**Recommendation: also install [Git for Windows](https://git-scm.com/download/win).**
+Git for Windows bundles `diff.exe` (GNU diff) in its `usr\bin` directory. `nshini`
+locates it automatically from the git install tree and uses it directly — giving clean
+standard unified diff output without git-specific headers. It handles Windows paths
+natively and starts instantly, unlike WSL which may need a cold start.
+
+Set `nshini_diff=git` or `nshini_diff=wsl` in `notes.ini` to pin the choice explicitly.
+A full path to any diff-compatible executable is also accepted as the value.
+
+Pass `-nogui` on the command line to skip Notepad++ ComparePlus and get terminal diff
+output instead — useful for scripting or when you want the diff in the console.
 
 ### stdin / stdout
 
@@ -235,8 +282,52 @@ standard Notepad++ install locations automatically and uses it if found.
 | `nshini_editor` | Editor to use for `edit` command. Overrides `EDITOR` env var; can be overridden by an explicit command-line argument. |
 | `nshini_loglevel` | Log verbosity: `0` = none, `1` = normal (default), `2` = verbose, `3` = debug. |
 | `nshini_backup` | Set to `1` to enable automatic `.bak` creation before editing. Default: `0` (disabled). |
+| `nshini_diff` | Diff tool for the `diff` command (Windows). `git` selects Git for Windows (uses its bundled `diff.exe` if found, otherwise `git --no-pager diff --no-index`), `wsl`, or a full path to any diff-compatible executable. Auto-detected if not set. |
+| `nshini_confirm` | Set to `1` to show a diff and prompt for confirmation before encoding changes back to LMBCS. Default: `0` (disabled). |
 
-Command-line flags (`-debug`, `-verbose`, `-quiet`) override `nshini_loglevel`.
+### Command-line flags
+
+| Flag | Description |
+|-|-|
+| `-debug` | Set log level to debug (overrides `nshini_loglevel`). |
+| `-verbose` | Set log level to verbose. |
+| `-silent` | Suppress all output. |
+| `-confirm` | Show diff and prompt for confirmation before applying (overrides `nshini_confirm`). |
+| `-nogui` | Skip GUI diff tools (e.g. Notepad++ ComparePlus); use terminal diff output instead. |
+
+
+
+## Installation
+
+`nshini` is a Domino add-in. The binary must reside in the Domino binary directory
+(`Notes_ExecDirectory`) so the Domino runtime loader can find the shared libraries.
+
+### Linux
+
+Copy the binary to the Domino binary directory, set permissions, and create a symlink.
+
+```sh
+cp nshini /opt/hcl/domino/notes/latest/linux/
+chmod 755 /opt/hcl/domino/notes/latest/linux/nshini
+cd /opt/hcl/domino/bin
+ln -s tools/startup nshini
+```
+
+`make install` handles the copy step. Set permissions and create the symlink manually afterwards.
+
+The symlink in `/opt/hcl/domino/bin` is what puts `nshini` on the path — without it you would need to invoke it with the full path or from the binary directory.
+
+### Windows
+
+Copy `nshini.exe` to the Domino program directory (e.g. `C:\Program Files\HCL\Domino\`).
+No further steps are required. Add the Domino program directory to `PATH` if you want to run `nshini` from any command prompt.
+
+
+## Notes
+
+- Uses `OSTranslate32` from the Domino C API for all character set conversion.
+- The `=<path>` argument injected by the Domino server runtime is automatically ignored for command parsing but used as the default notes.ini path.
+- Reads and writes files in binary mode to preserve exact byte content.
 
 
 ## Building
@@ -257,12 +348,3 @@ Requires Microsoft Visual Studio and the HCL Domino C API.
 ```cmd
 nmake -f mswin64.mak
 ```
-
-
-## Notes
-
-- Uses `OSTranslate32` from the Domino C API for all character set conversion.
-- The `=<path>` argument injected by the Domino server runtime is automatically ignored
-  for command parsing but used as the default notes.ini path.
-- Reads and writes files in binary mode to preserve exact byte content.
-

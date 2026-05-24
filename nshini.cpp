@@ -3,7 +3,7 @@
 #                                                                         #
 # Notes INI file utility -- LMBCS <-> UTF-8 conversion and editing        #
 #                                                                         #
-# Version 1.0.0 24.05.2026                                                #
+# Version 1.0.1 24.05.2026                                                #
 # (C) Copyright Daniel Nashed/Nash!Com 2026                               #
 #                                                                         #
 # Licensed under the Apache License, Version 2.0 (the "License");         #
@@ -38,7 +38,7 @@ On Linux output is automatically in Unicode.
 */
 
 
-#define NSHINI_VERSION "1.0.0"
+#define NSHINI_VERSION "1.0.1"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -51,6 +51,10 @@ On Linux output is automatically in Unicode.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 #include "global.h"
 #include "nsfdb.h"
@@ -75,12 +79,22 @@ On Linux output is automatically in Unicode.
 #define LOG_VERBOSE    2
 #define LOG_DEBUG      3
 
+/* notes.ini configuration variable names */
+#define ENV_LOGLEVEL   "nshini_loglevel"
+#define ENV_EDITOR     "nshini_editor"
+#define ENV_BACKUP     "nshini_backup"
+#define ENV_DIFF       "nshini_diff"
+#define ENV_CONFIRM    "nshini_confirm"
+
 
 /* Defaults */
 
 static int  g_nLogLevel  = LOG_NORMAL;
 static int  g_bBackup    = FALSE;
 static char g_szEditorIni[MAXPATH+1] = {0};
+static char g_szDiffIni[MAXPATH+1]   = {0};
+static int  g_bConfirm   = FALSE;
+static int  g_bNoGui     = FALSE;
 
 
 /* NULL or empty string check */
@@ -98,10 +112,10 @@ static char g_szEditorIni[MAXPATH+1] = {0};
 #endif
 
 
-#define LogError(...)   do { printf (__VA_ARGS__); } while (0)
-#define LogNormal(...)  do { if (g_nLogLevel >= LOG_NORMAL)  printf (__VA_ARGS__); } while (0)
-#define LogVerbose(...) do { if (g_nLogLevel >= LOG_VERBOSE) printf (__VA_ARGS__); } while (0)
-#define LogDebug(...)   do { if (g_nLogLevel >= LOG_DEBUG)   printf (__VA_ARGS__); } while (0)
+#define LogError(...)   do { fprintf (stderr, __VA_ARGS__); } while (0)
+#define LogNormal(...)  do { if (g_nLogLevel >= LOG_NORMAL)  fprintf (stderr, __VA_ARGS__); } while (0)
+#define LogVerbose(...) do { if (g_nLogLevel >= LOG_VERBOSE) fprintf (stderr, __VA_ARGS__); } while (0)
+#define LogDebug(...)   do { if (g_nLogLevel >= LOG_DEBUG)   fprintf (stderr, __VA_ARGS__); } while (0)
 
 
 static LONG GetEnvLongWithDefault (const char *pszName, LONG lDefault)
@@ -124,30 +138,47 @@ static LONG GetEnvLongWithDefault (const char *pszName, LONG lDefault)
 
 static void PrintSyntaxHint (void)
 {
-    printf ("Syntax Error - Use -help for usage\n");
+    fprintf (stderr, "Syntax Error - Use -help for usage\n");
 }
 
 
 static void PrintUsage (void)
 {
-    printf ("\n");
-    printf ("nshini %s - Notes INI file utility\n\n", NSHINI_VERSION);
-    printf ("Usage: nshini <command> [options]\n\n");
-    printf ("  convert <file>              auto-convert based on extension\n");
-    printf ("  decode  <input> [output]    convert LMBCS to UTF-8\n");
-    printf ("  encode  <input> [output]    convert UTF-8 to LMBCS\n");
-    printf ("  edit    <file>  [editor]    edit file (auto convert if .ini)\n");
-#ifndef _WIN32
-    printf ("  diff    <file1> [file2]     diff files (decodes .ini to UTF-8)\n");
+    fprintf (stderr, "\n");
+    fprintf (stderr, "nshini %s - Notes INI file utility\n\n", NSHINI_VERSION);
+    fprintf (stderr, "Usage: nshini <command> [options]\n\n");
+    fprintf (stderr, "  convert <file>              auto-convert based on extension\n");
+    fprintf (stderr, "  decode  <input> [output]    convert LMBCS to UTF-8\n");
+    fprintf (stderr, "  encode  <input> [output]    convert UTF-8 to LMBCS\n");
+    fprintf (stderr, "  edit    <file>  [editor]    edit file (auto convert if .ini)\n");
+    fprintf (stderr, "  diff    <file1> [file2]     diff files (decodes .ini to UTF-8)\n");
+    fprintf (stderr, "\n");
+    fprintf (stderr, "Extension Rules:\n\n");
+    fprintf (stderr, "  .ini           -> LMBCS format\n");
+    fprintf (stderr, "  .utf8 / other  -> UTF-8 format\n");
+    fprintf (stderr, "\n");
+    fprintf (stderr, "convert: .ini -> creates <file>.utf8 | .utf8 -> strips suffix\n");
+    fprintf (stderr, "Use - for stdin/stdout\n");
+    fprintf (stderr, "\n");
+    fprintf (stderr, "Notes.ini Settings:\n\n");
+    fprintf (stderr, "  %-26s log verbosity 0=none 1=normal 2=verbose 3=debug\n", ENV_LOGLEVEL "=<n>");
+    fprintf (stderr, "  %-26s editor for edit command\n",                          ENV_EDITOR  "=<editor>");
+    fprintf (stderr, "  %-26s set to 1 to create .bak before editing\n",           ENV_BACKUP  "=1");
+#ifdef _WIN32
+    fprintf (stderr, "  %-26s diff tool: git, wsl, or full path (Windows)\n",     ENV_DIFF    "=<tool>");
+    fprintf (stderr, "\n");
+    fprintf (stderr, "  Tip: install Notepad++ with ComparePlus plugin for visual side-by-side diff\n");
+    fprintf (stderr, "  Tip: install Git for Windows -- diff.exe from its tree is used for terminal diff\n");
 #endif
-    printf ("\n");
-    printf ("Extension rules:\n");
-    printf ("  .ini           -> LMBCS format\n");
-    printf ("  .utf8 / other  -> UTF-8 format\n");
-    printf ("\n");
-    printf ("convert: .ini -> creates <file>.utf8 | .utf8 -> strips suffix\n");
-    printf ("Use - for stdin/stdout\n");
-    printf ("\n");
+    fprintf (stderr, "  %-26s set to 1 to show diff and confirm before applying\n", ENV_CONFIRM "=1");
+    fprintf (stderr, "\n");
+    fprintf (stderr, "Command-line Flags:\n\n");
+    fprintf (stderr, "  -debug                     set log level to debug\n");
+    fprintf (stderr, "  -verbose                   set log level to verbose\n");
+    fprintf (stderr, "  -silent                    suppress all output\n");
+    fprintf (stderr, "  -confirm                   show diff and confirm before applying\n");
+    fprintf (stderr, "  -nogui                     skip GUI diff tools (use terminal diff)\n");
+    fprintf (stderr, "\n");
 }
 
 
@@ -356,6 +387,17 @@ static int ConvertBuffer (WORD wTranslateMode, const char *pInputBuffer, DWORD d
 }
 
 
+static const char *TranslateModeStr (WORD wTranslateMode)
+{
+    switch (wTranslateMode)
+    {
+        case OS_TRANSLATE_LMBCS_TO_UTF8: return "LMBCS -> UTF-8";
+        case OS_TRANSLATE_UTF8_TO_LMBCS: return "UTF-8 -> LMBCS";
+        default:                         return "unknown";
+    }
+}
+
+
 static int ConvertFile (WORD wTranslateMode, const char *pszInputFile, const char *pszOutputFile)
 {
     char  *pszInputBuffer  = NULL;
@@ -366,6 +408,8 @@ static int ConvertFile (WORD wTranslateMode, const char *pszInputFile, const cha
 
     if (IsEmpty (pszInputFile) || IsEmpty (pszOutputFile))
         return FALSE;
+
+    LogDebug ("Convert [%s]: %s -> %s\n", TranslateModeStr (wTranslateMode), pszInputFile, pszOutputFile);
 
     if (!ReadFileOrStdin (pszInputFile, &pszInputBuffer, &dwInputSize))
     {
@@ -588,6 +632,84 @@ static int IsNotepadPlusPlus (const char *pszEditor)
 
     return FALSE;
 }
+
+/* Returns TRUE if the ComparePlus plugin DLL is present for the given npp.exe path.
+   Checks the install-dir plugins folder and the %APPDATA% user plugins folder. */
+static int FindComparePlusPlugin (const char *pszNppExe)
+{
+    char        szDir[MAXPATH+1]  = {0};
+    char        szDll[MAXPATH+1]  = {0};
+    char       *pszSlash          = NULL;
+    const char *pszAppData        = NULL;
+
+    if (IsEmpty (pszNppExe))
+        return FALSE;
+
+    /* Build directory from exe path */
+    strncpy (szDir, pszNppExe, sizeof (szDir) - 1);
+    pszSlash = strrchr (szDir, '\\');
+    if (pszSlash)
+        *pszSlash = 0;
+
+    /* 1. <npp_dir>\plugins\ComparePlus\ComparePlus.dll */
+    snprintf (szDll, sizeof (szDll), "%s\\plugins\\ComparePlus\\ComparePlus.dll", szDir);
+    if (0 == _access (szDll, 0))
+        return TRUE;
+
+    /* 2. %APPDATA%\Notepad++\plugins\ComparePlus\ComparePlus.dll */
+    pszAppData = getenv ("APPDATA");
+    if (!IsEmpty (pszAppData))
+    {
+        snprintf (szDll, sizeof (szDll), "%s\\Notepad++\\plugins\\ComparePlus\\ComparePlus.dll", pszAppData);
+        if (0 == _access (szDll, 0))
+            return TRUE;
+    }
+
+    return FALSE;
+}
+
+
+/* Locate diff.exe bundled with Git for Windows.
+   Git is typically at <root>\cmd\git.exe or <root>\bin\git.exe or <root>\mingw64\bin\git.exe;
+   diff.exe lives at <root>\usr\bin\diff.exe in all layouts.
+   We strip path components above git.exe one at a time and probe for usr\bin\diff.exe. */
+static int FindGitDiff (char *pszPath, size_t maxLen)
+{
+    char  szGit[MAXPATH+1]  = {0};
+    char  szDir[MAXPATH+1]  = {0};
+    char  szDiff[MAXPATH+1] = {0};
+    char *pszSlash          = NULL;
+    int   nLevel            = 0;
+
+    if (!SearchPathA (NULL, "git.exe", NULL, (DWORD) sizeof (szGit), szGit, NULL))
+        return FALSE;
+
+    strncpy (szDir, szGit, sizeof (szDir) - 1);
+
+    /* Strip git.exe filename to get its containing directory */
+    pszSlash = strrchr (szDir, '\\');
+    if (pszSlash)
+        *pszSlash = 0;
+
+    /* Walk up up to 3 levels to find the git root where usr\bin\diff.exe lives */
+    for (nLevel = 0; nLevel < 3; nLevel++)
+    {
+        snprintf (szDiff, sizeof (szDiff), "%s\\usr\\bin\\diff.exe", szDir);
+        if (0 == _access (szDiff, 0))
+        {
+            strncpy (pszPath, szDiff, maxLen - 1);
+            pszPath[maxLen - 1] = 0;
+            return TRUE;
+        }
+
+        pszSlash = strrchr (szDir, '\\');
+        if (!pszSlash)
+            break;
+        *pszSlash = 0;
+    }
+
+    return FALSE;
+}
 #endif
 
 
@@ -660,6 +782,31 @@ static int LaunchEditor (const char *pszFile, const char *pszEditorOverride)
 }
 
 
+static int GetAbsPath (const char *pszPath, char *pszAbs, size_t maxLen)
+{
+    if (IsEmpty (pszPath) || !pszAbs || !maxLen)
+        return FALSE;
+
+    *pszAbs = 0;
+
+#ifdef _WIN32
+    return (0 != GetFullPathNameA (pszPath, (DWORD) maxLen, pszAbs, NULL)) ? TRUE : FALSE;
+#else
+    if ('/' == pszPath[0])
+    {
+        snprintf (pszAbs, maxLen, "%s", pszPath);
+        return TRUE;
+    }
+
+    if (!getcwd (pszAbs, maxLen))
+        return FALSE;
+
+    snprintf (pszAbs + strlen (pszAbs), maxLen - strlen (pszAbs), "/%s", pszPath);
+    return TRUE;
+#endif
+}
+
+
 static int CopyFilePlain (const char *pszSrc, const char *pszDst)
 {
     char   *pszBuffer = NULL;
@@ -689,10 +836,163 @@ Done:
 }
 
 
+#ifdef _WIN32
+/* Convert a Windows absolute path to its WSL /mnt/<drive>/... equivalent */
+static void WinPathToWsl (const char *pszWin, char *pszWsl, size_t maxLen)
+{
+    char   drive  = 0;
+    size_t pos    = 0;
+    size_t i      = 0;
+
+    if (IsEmpty (pszWin) || !pszWsl || !maxLen)
+        return;
+
+    *pszWsl = 0;
+
+    if (pszWin[1] == ':')
+    {
+        drive = pszWin[0] | 0x20;  /* ASCII lowercase of drive letter */
+        snprintf (pszWsl, maxLen, "/mnt/%c/", drive);
+        pos    = strlen (pszWsl);
+        pszWin += 3;                /* skip "X:\" */
+    }
+
+    for (i = 0; pos < maxLen - 1 && pszWin[i]; i++)
+        pszWsl[pos++] = (pszWin[i] == '\\') ? '/' : pszWin[i];
+
+    pszWsl[pos] = 0;
+}
+
+/* Returns TRUE if the named command is available in PATH (suppresses all output) */
+static int CommandAvailable (const char *pszCmd)
+{
+    char szTest[128] = {0};
+    snprintf (szTest, sizeof (szTest), "%s --version >NUL 2>&1", pszCmd);
+    return (0 == system (szTest)) ? TRUE : FALSE;
+}
+#endif
+
+
+static int PromptConfirm (const char *pszMsg)
+{
+    char szLine[64] = {0};
+
+    fprintf (stderr, "\n%s [y/n]: ", pszMsg);
+    fflush (stderr);
+
+    if (!fgets (szLine, sizeof (szLine), stdin))
+        return FALSE;
+
+    return (szLine[0] == 'y' || szLine[0] == 'Y') ? TRUE : FALSE;
+}
+
+
+/* Run a terminal (non-GUI) diff between two UTF-8 files.
+   Returns 0 = no differences, 1 = differences, -1 = error / no tool. */
+static int RunTerminalDiff (const char *pszFile1, const char *pszFile2)
+{
+    char szCmd[MAXPATH*3] = {0};
+
+    if (IsEmpty (pszFile1) || IsEmpty (pszFile2))
+        return -1;
+
+#ifdef _WIN32
+    {
+        const char         *pszTool             = NULL;
+        char                szWsl1[MAXPATH+1]   = {0};
+        char                szWsl2[MAXPATH+1]   = {0};
+        char                szGitDiff[MAXPATH+1] = {0};
+        DWORD               dwExit              = 1;
+        STARTUPINFOA        si                  = {0};
+        PROCESS_INFORMATION pi                  = {0};
+
+        /* Tool resolution: ini override (ComparePlus is GUI -- skip) -> git diff.exe -> wsl */
+        if (!IsEmpty (g_szDiffIni) && !IsNotepadPlusPlus (g_szDiffIni))
+            pszTool = g_szDiffIni;
+
+        if (!pszTool)
+        {
+            if (CommandAvailable ("git"))
+            {
+                if (FindGitDiff (szGitDiff, sizeof (szGitDiff)))
+                {
+                    pszTool = szGitDiff;
+                    LogDebug ("Confirm diff tool: %s (git diff.exe, auto-detected)\n", pszTool);
+                }
+                else
+                {
+                    pszTool = "git";
+                    LogDebug ("Confirm diff tool: git (auto-detected)\n");
+                }
+            }
+            else if (CommandAvailable ("wsl"))
+            {
+                pszTool = "wsl";
+                LogDebug ("Confirm diff tool: wsl (auto-detected)\n");
+            }
+            else
+            {
+                LogError ("No terminal diff tool found for confirm. Install Git for Windows.\n");
+                return -1;
+            }
+        }
+
+        if (0 == strcasecmp (pszTool, "git"))
+        {
+            /* diff.exe not found in git tree -- fall back to git porcelain */
+            snprintf (szCmd, sizeof (szCmd),
+                      "git --no-pager diff --no-index -- \"%s\" \"%s\"",
+                      pszFile1, pszFile2);
+        }
+        else if (0 == strcasecmp (pszTool, "wsl"))
+        {
+            WinPathToWsl (pszFile1, szWsl1, sizeof (szWsl1));
+            WinPathToWsl (pszFile2, szWsl2, sizeof (szWsl2));
+            snprintf (szCmd, sizeof (szCmd), "wsl diff \"%s\" \"%s\"", szWsl1, szWsl2);
+        }
+        else
+        {
+            /* Full path to diff.exe (from git tree, nshini_diff, or other explicit tool) */
+            snprintf (szCmd, sizeof (szCmd), "\"%s\" \"%s\" \"%s\"", pszTool, pszFile1, pszFile2);
+        }
+
+        LogDebug ("Confirm diff cmd: %s\n", szCmd);
+
+        si.cb = sizeof (si);
+
+        if (!CreateProcessA (NULL, szCmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
+        {
+            LogError ("Failed to launch diff tool for confirm\n");
+            return -1;
+        }
+
+        WaitForSingleObject (pi.hProcess, INFINITE);
+        GetExitCodeProcess (pi.hProcess, &dwExit);
+        CloseHandle (pi.hProcess);
+        CloseHandle (pi.hThread);
+
+        return (int) dwExit;
+    }
+#else
+    {
+        int nRet = 0;
+
+        snprintf (szCmd, sizeof (szCmd), "diff \"%s\" \"%s\"", pszFile1, pszFile2);
+        LogDebug ("Confirm diff cmd: %s\n", szCmd);
+        nRet = system (szCmd);
+
+        /* system() encodes exit status via waitpid; 0 means diff exited 0 (no differences) */
+        return (nRet == 0) ? 0 : 1;
+    }
+#endif
+}
+
+
 static int EditFile (const char *pszFile, const char *pszEditorOverride)
 {
-    char szTempFile[1024]       = {0};
+    char szTempFile[MAXPATH+1]  = {0};
     char szBakFile[MAXPATH+1]   = {0};
+    char szSnapFile[MAXPATH+16] = {0};
     int  bIsLmbcs               = FALSE;
     int  bEditorOk              = FALSE;
     int  ret                    = FALSE;
@@ -701,6 +1001,7 @@ static int EditFile (const char *pszFile, const char *pszEditorOverride)
         return FALSE;
 
     bIsLmbcs = IsLmbcsFile (pszFile);
+    LogDebug ("Edit: %s detected as %s\n", pszFile, bIsLmbcs ? "LMBCS" : "UTF-8");
 
     if (bIsLmbcs)
     {
@@ -724,12 +1025,50 @@ static int EditFile (const char *pszFile, const char *pszEditorOverride)
 
         if (!ConvertFile (OS_TRANSLATE_LMBCS_TO_UTF8, pszFile, szTempFile))
             goto Done;
+
+        if (g_bConfirm)
+        {
+            snprintf (szSnapFile, sizeof (szSnapFile), "%s.orig", szTempFile);
+            if (!CopyFilePlain (szTempFile, szSnapFile))
+            {
+                LogNormal ("Warning: could not create snapshot for confirm -- confirm disabled\n");
+                szSnapFile[0] = 0;
+            }
+            else
+            {
+                LogDebug ("Confirm snapshot: %s\n", szSnapFile);
+            }
+        }
     }
 
     bEditorOk = LaunchEditor (bIsLmbcs ? szTempFile : pszFile, pszEditorOverride);
 
     if (!bEditorOk)
         LogNormal ("Warning: editor returned non-zero exit code\n");
+
+    if (bIsLmbcs && g_bConfirm && !IsEmpty (szSnapFile))
+    {
+        int nDiff = RunTerminalDiff (szSnapFile, szTempFile);
+
+        remove (szSnapFile);
+        szSnapFile[0] = 0;
+
+        if (nDiff == 0)
+        {
+            LogNormal ("No changes made.\n");
+            remove (szTempFile);
+            ret = TRUE;
+            goto Done;
+        }
+
+        if (!PromptConfirm ("Apply changes?"))
+        {
+            LogNormal ("Changes discarded.\n");
+            remove (szTempFile);
+            ret = TRUE;
+            goto Done;
+        }
+    }
 
     if (bIsLmbcs)
     {
@@ -752,7 +1091,6 @@ Done:
 }
 
 
-#ifndef _WIN32
 /* Diff two files; .ini inputs are decoded to UTF-8 temp files first.
    Pass "-" for file1 to read UTF-8 from stdin (passed straight to diff). */
 static int DiffFiles (const char *pszFile1, const char *pszFile2)
@@ -765,9 +1103,20 @@ static int DiffFiles (const char *pszFile1, const char *pszFile2)
     int         bTemp1              = FALSE;
     int         bTemp2              = FALSE;
     int         ret                 = FALSE;
+#ifdef _WIN32
+    const char *pszTool              = NULL;
+    char        szWsl1[MAXPATH+1]    = {0};
+    char        szWsl2[MAXPATH+1]    = {0};
+    char        szNppPath[MAXPATH+1] = {0};
+    char        szGitDiff[MAXPATH+1] = {0};
+    int         bComparePlus         = FALSE;
+#endif
 
     if (IsEmpty (pszFile1) || IsEmpty (pszFile2))
         return FALSE;
+
+    LogDebug ("Diff file1: %s detected as %s\n", pszFile1,
+              0 == strcmp (pszFile1, "-") ? "UTF-8 (stdin)" : IsLmbcsFile (pszFile1) ? "LMBCS" : "UTF-8");
 
     if (0 != strcmp (pszFile1, "-") && IsLmbcsFile (pszFile1))
     {
@@ -783,6 +1132,9 @@ static int DiffFiles (const char *pszFile1, const char *pszFile2)
         pszArg1 = szTemp1;
     }
 
+    LogDebug ("Diff file2: %s detected as %s\n", pszFile2,
+              0 == strcmp (pszFile2, "-") ? "UTF-8 (stdin)" : IsLmbcsFile (pszFile2) ? "LMBCS" : "UTF-8");
+
     if (0 != strcmp (pszFile2, "-") && IsLmbcsFile (pszFile2))
     {
         snprintf (szTemp2, sizeof (szTemp2), "%s.utf8.diff", pszFile2);
@@ -797,8 +1149,109 @@ static int DiffFiles (const char *pszFile1, const char *pszFile2)
         pszArg2 = szTemp2;
     }
 
+#ifdef _WIN32
+    /* Resolve diff tool: ENV_DIFF ini -> auto-detect git -> auto-detect wsl -> error */
+    pszTool = IsEmpty (g_szDiffIni) ? NULL : g_szDiffIni;
+
+    /* -nogui: skip any Notepad++ path even if set explicitly in notes.ini */
+    if (g_bNoGui && !IsEmpty (pszTool) && IsNotepadPlusPlus (pszTool))
+    {
+        LogDebug ("Diff tool: Notepad++ skipped (-nogui)\n");
+        pszTool = NULL;
+    }
+
+    if (!IsEmpty (pszTool))
+    {
+        LogDebug ("Diff tool: %s (" ENV_DIFF ")\n", pszTool);
+    }
+    else
+    {
+        LogDebug (ENV_DIFF " not set -- auto-detecting\n");
+
+        if (!g_bNoGui &&
+            FindNotepadPlusPlus (szNppPath, sizeof (szNppPath)) &&
+            FindComparePlusPlugin (szNppPath))
+        {
+            pszTool      = szNppPath;
+            bComparePlus = TRUE;
+            LogDebug ("Diff tool: Notepad++ ComparePlus (auto-detected)\n");
+        }
+        else if (CommandAvailable ("git"))
+        {
+            if (FindGitDiff (szGitDiff, sizeof (szGitDiff)))
+            {
+                pszTool = szGitDiff;
+                LogDebug ("Diff tool: %s (git diff.exe, auto-detected)\n", pszTool);
+            }
+            else
+            {
+                pszTool = "git";
+                LogDebug ("Diff tool: git (auto-detected)\n");
+            }
+        }
+        else if (CommandAvailable ("wsl"))
+        {
+            pszTool = "wsl";
+            LogDebug ("Diff tool: wsl (auto-detected)\n");
+        }
+        else
+        {
+            LogError ("No diff tool found. Set " ENV_DIFF "=git or " ENV_DIFF "=wsl in notes.ini\n");
+            goto Done;
+        }
+    }
+
+    if (bComparePlus)
+    {
+        snprintf (szCmd, sizeof (szCmd),
+                  "\"%s\" -multiInst -nosession -pluginMessage=comparePlus \"%s\" \"%s\"",
+                  pszTool, pszArg1, pszArg2);
+    }
+    else if (0 == strcasecmp (pszTool, "wsl"))
+    {
+        WinPathToWsl (pszArg1, szWsl1, sizeof (szWsl1));
+        WinPathToWsl (pszArg2, szWsl2, sizeof (szWsl2));
+        snprintf (szCmd, sizeof (szCmd), "wsl diff \"%s\" \"%s\"", szWsl1, szWsl2);
+    }
+    else if (0 == strcasecmp (pszTool, "git"))
+    {
+        /* diff.exe not found in git tree -- fall back to git porcelain */
+        snprintf (szCmd, sizeof (szCmd), "git --no-pager diff --no-index -- \"%s\" \"%s\"", pszArg1, pszArg2);
+    }
+    else
+    {
+        /* Full path to diff.exe (from git tree, nshini_diff, or other explicit tool) */
+        snprintf (szCmd, sizeof (szCmd), "\"%s\" \"%s\" \"%s\"", pszTool, pszArg1, pszArg2);
+    }
+#else
     snprintf (szCmd, sizeof (szCmd), "diff \"%s\" \"%s\"", pszArg1, pszArg2);
+#endif
+
+    LogDebug ("Diff cmd: %s\n", szCmd);
+
+#ifdef _WIN32
+    {
+        STARTUPINFOA        si = {0};
+        PROCESS_INFORMATION pi = {0};
+
+        si.cb = sizeof (si);
+
+        if (CreateProcessA (NULL, szCmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
+        {
+            WaitForSingleObject (pi.hProcess, INFINITE);
+            CloseHandle (pi.hProcess);
+            CloseHandle (pi.hThread);
+        }
+        else
+        {
+            LogError ("Failed to launch diff tool\n");
+            goto Done;
+        }
+    }
+#else
     system (szCmd);
+#endif
+
     ret = TRUE;
 
 Done:
@@ -811,7 +1264,6 @@ Done:
 
     return ret;
 }
-#endif
 
 
 static WORD EvaluateFormula (NOTEHANDLE hNote, FORMULAHANDLE hFormula, char *pszResult, WORD wResultLen, STATUS *pretError)
@@ -1034,14 +1486,18 @@ extern "C" STATUS LNPUBLIC AddInMain (HMODULE hResourceModule, int argc, const c
     }
 
     /* Read settings from notes.ini; command-line flags below will override */
-    g_nLogLevel = (int)  GetEnvLongWithDefault ("nshini_loglevel", (LONG) LOG_NORMAL);
-    g_bBackup   = (int)  GetEnvLongWithDefault ("nshini_backup",   (LONG) FALSE);
+    g_nLogLevel = (int)  GetEnvLongWithDefault (ENV_LOGLEVEL, (LONG) LOG_NORMAL);
+    g_bBackup   = (int)  GetEnvLongWithDefault (ENV_BACKUP,   (LONG) FALSE);
+    g_bConfirm  = (int)  GetEnvLongWithDefault (ENV_CONFIRM,  (LONG) FALSE);
 
-    OSGetEnvironmentString ("nshini_editor", g_szEditorIni, (WORD) sizeof (g_szEditorIni) - 1);
+    OSGetEnvironmentString (ENV_EDITOR, g_szEditorIni, (WORD) sizeof (g_szEditorIni) - 1);
+    OSGetEnvironmentString (ENV_DIFF,   g_szDiffIni,   (WORD) sizeof (g_szDiffIni)   - 1);
 
-    LogDebug ("nshini_loglevel ini: %d\n", g_nLogLevel);
-    LogDebug ("nshini_backup   ini: %d\n", g_bBackup);
-    LogDebug ("nshini_editor   ini: %s\n", IsEmpty (g_szEditorIni) ? "(not set)" : g_szEditorIni);
+    LogDebug (ENV_LOGLEVEL " ini: %d\n", g_nLogLevel);
+    LogDebug (ENV_BACKUP   " ini: %d\n", g_bBackup);
+    LogDebug (ENV_CONFIRM  " ini: %d\n", g_bConfirm);
+    LogDebug (ENV_EDITOR   " ini: %s\n", IsEmpty (g_szEditorIni) ? "(not set)" : g_szEditorIni);
+    LogDebug (ENV_DIFF     " ini: %s\n", IsEmpty (g_szDiffIni)   ? "(not set)" : g_szDiffIni);
 
     /* Pass 2: single scan -- classify each arg as command, flag, or positional file */
     for (i = 1; i < filteredArgc; i++)
@@ -1074,6 +1530,12 @@ extern "C" STATUS LNPUBLIC AddInMain (HMODULE hResourceModule, int argc, const c
             if (0 == strcmp (pszArg, "-verbose")) { g_nLogLevel = LOG_VERBOSE; continue; }
             if (0 == strcmp (pszArg, "-silent"))  { g_nLogLevel = LOG_NONE;    continue; }
             if (0 == strcmp (pszArg, "-debug"))   { g_nLogLevel = LOG_DEBUG;   continue; }
+
+            /* Confirm flag -- override notes.ini setting */
+            if (0 == strcmp (pszArg, "-confirm")) { g_bConfirm = TRUE; continue; }
+
+            /* Disable GUI diff tools (e.g. Notepad++ ComparePlus) -- use terminal diff */
+            if (0 == strcmp (pszArg, "-nogui"))   { g_bNoGui   = TRUE; continue; }
 
             /* Unknown flag */
             LogError ("Unknown option: %s\n", pszArg);
@@ -1153,11 +1615,11 @@ extern "C" STATUS LNPUBLIC AddInMain (HMODULE hResourceModule, int argc, const c
     LogDebug ("  log level  : %d\n",   g_nLogLevel);
     LogDebug ("  action     : %d\n",   action);
     LogDebug ("  nFiles     : %d\n",   nFiles);
-    LogDebug ("  pszFiles[0]: %s\n",   pszFiles[0] ? pszFiles[0] : "(null)");
-    LogDebug ("  pszFiles[1]: %s\n",   pszFiles[1] ? pszFiles[1] : "(null)");
-    LogDebug ("  pszInput   : %s\n",   pszInput    ? pszInput    : "(null)");
-    LogDebug ("  pszOutput  : %s\n",   pszOutput   ? pszOutput   : "(null)");
-    LogDebug ("  defaultIni : %s\n",   pszDefaultIni ? pszDefaultIni : "(null)");
+    LogDebug ("  pszFiles[0]: %s\n",   pszFiles[0] ? pszFiles[0] : "");
+    LogDebug ("  pszFiles[1]: %s\n",   pszFiles[1] ? pszFiles[1] : "");
+    LogDebug ("  pszInput   : %s\n",   pszInput    ? pszInput    : "");
+    LogDebug ("  pszOutput  : %s\n",   pszOutput   ? pszOutput   : "");
+    LogDebug ("  defaultIni : %s\n",   pszDefaultIni ? pszDefaultIni : "");
     LogDebug ("--------------------\n");
 
     switch (action)
@@ -1192,8 +1654,9 @@ extern "C" STATUS LNPUBLIC AddInMain (HMODULE hResourceModule, int argc, const c
 
         case ACTION_CONVERT:
         {
-            WORD wMode = IsLmbcsFile (pszInput) ? OS_TRANSLATE_LMBCS_TO_UTF8
-                                                : OS_TRANSLATE_UTF8_TO_LMBCS;
+            WORD wMode = 0;
+
+            /* Resolve output first -- direction depends on both extensions */
             if (!pszOutput)
             {
                 if (nFiles >= 2)
@@ -1204,6 +1667,42 @@ extern "C" STATUS LNPUBLIC AddInMain (HMODULE hResourceModule, int argc, const c
                     pszOutput = szOutput;
                 }
             }
+
+            LogDebug ("Convert: input=%s (%s)  output=%s (%s)\n",
+                      pszInput,  IsLmbcsFile (pszInput)  ? "LMBCS" : "UTF-8",
+                      pszOutput, IsLmbcsFile (pszOutput) ? "LMBCS" : "UTF-8");
+
+            {
+                char szAbsInput[MAXPATH+1]  = {0};
+                char szAbsOutput[MAXPATH+1] = {0};
+
+                GetAbsPath (pszInput,  szAbsInput,  sizeof (szAbsInput));
+                GetAbsPath (pszOutput, szAbsOutput, sizeof (szAbsOutput));
+
+#ifdef _WIN32
+                if (!IsEmpty (szAbsInput) && 0 == _stricmp (szAbsInput, szAbsOutput))
+#else
+                if (!IsEmpty (szAbsInput) && 0 == strcmp (szAbsInput, szAbsOutput))
+#endif
+                {
+                    LogError ("convert: input and output are the same file: %s\n", szAbsInput);
+                    break;
+                }
+            }
+
+            if (IsLmbcsFile (pszInput) && !IsLmbcsFile (pszOutput))
+                wMode = OS_TRANSLATE_LMBCS_TO_UTF8;
+            else if (!IsLmbcsFile (pszInput) && IsLmbcsFile (pszOutput))
+                wMode = OS_TRANSLATE_UTF8_TO_LMBCS;
+            else
+            {
+                /* Same format -- plain copy */
+                LogDebug ("Convert: same format (%s) -- no conversion needed\n",
+                          IsLmbcsFile (pszInput) ? "LMBCS" : "UTF-8");
+                CopyFilePlain (pszInput, pszOutput);
+                break;
+            }
+
             ConvertFile (wMode, pszInput, pszOutput);
             break;
         }
@@ -1215,11 +1714,15 @@ extern "C" STATUS LNPUBLIC AddInMain (HMODULE hResourceModule, int argc, const c
 
         case ACTION_DIFF:
         {
-#ifdef _WIN32
-            LogError ("diff is not supported on Windows\n");
-#else
             const char *pszFile2           = NULL;
             char        szFile2[MAXPATH+1] = {0};
+
+            if (nFiles == 0)
+            {
+                LogError ("diff requires at least one file\n");
+                PrintSyntaxHint();
+                break;
+            }
 
             if (nFiles >= 2)
             {
@@ -1228,19 +1731,26 @@ extern "C" STATUS LNPUBLIC AddInMain (HMODULE hResourceModule, int argc, const c
             else if (!IsEmpty (pszDefaultIni))
             {
                 pszFile2 = pszDefaultIni;
+                LogVerbose ("Diffing against: %s\n", pszFile2);
             }
             else if (GetNotesIniPath (szFile2, sizeof (szFile2)))
             {
                 pszFile2 = szFile2;
+                LogVerbose ("Diffing against: %s\n", pszFile2);
             }
             else
             {
-                LogError ("No second file specified and cannot determine notes.ini path\n");
+                LogError ("Cannot determine active notes.ini path -- specify a second file\n");
+                break;
+            }
+
+            if (0 == strcmp (pszInput, pszFile2))
+            {
+                LogError ("diff: both files resolve to the same path: %s\n", pszInput);
                 break;
             }
 
             DiffFiles (pszInput, pszFile2);
-#endif
             break;
         }
     }

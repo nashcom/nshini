@@ -1,0 +1,1 @@
+powershell -ExecutionPolicy Bypass -File create_release_zip.ps1
