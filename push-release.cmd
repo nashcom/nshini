@@ -6,12 +6,14 @@ set "RELEASE=v%VERSION%"
 
 call :header Pushing release %RELEASE%
 
-git tag -d "%RELEASE%"
-if errorlevel 1 exit /b %errorlevel%
+rem Delete local tag if it already exists
+git tag -d "%RELEASE%" >nul 2>&1
 
+rem Create new tag
 git tag "%RELEASE%"
 if errorlevel 1 exit /b %errorlevel%
 
+rem Push tag to origin
 git push --force origin "%RELEASE%"
 if errorlevel 1 exit /b %errorlevel%
 
