@@ -26,6 +26,8 @@ nshini decode  <input> [output]    convert LMBCS to UTF-8
 nshini encode  <input> [output]    convert UTF-8 to LMBCS
 nshini edit    <file> [editor]     edit file; auto-converts .ini to/from UTF-8
 nshini diff    <file1> [file2]     diff files (decodes .ini to UTF-8 first)
+nshini set     <variable>=<value>  set a notes.ini variable via the Domino API
+nshini get     <variable>          get a notes.ini variable value
 ```
 
 ```
@@ -147,6 +149,48 @@ A full path to any diff-compatible executable is also accepted as the value.
 
 Pass `-nogui` on the command line to skip Notepad++ ComparePlus and get terminal diff
 output instead — useful for scripting or when you want the diff in the console.
+
+### set
+
+Sets a notes.ini variable via `OSSetEnvironmentVariable` from the Domino C API.
+The API handles character set encoding internally; non-ASCII values (passwords,
+international strings) are passed directly and stored correctly.
+
+```
+nshini set CERTSTORE_CACHELOG=1
+```
+
+A space-separated form is also accepted:
+
+```
+nshini set CERTSTORE_CACHELOG 1
+```
+
+`OSSetEnvironmentVariable` updates the in-memory cache and writes to the notes.ini
+file on disk. When Domino is running this goes through the API's own file locking,
+making it safe for live changes. When Domino is stopped it is equivalent to a direct
+file write but without the LMBCS encoding complexity.
+
+For bulk edits or changes that require the server to be stopped, use `nshini edit`
+instead.
+
+### get
+
+Reads a notes.ini variable via `OSGetEnvironmentString` and writes the UTF-8 decoded
+value to stdout.
+
+```
+nshini get CERTSTORE_CACHELOG
+```
+
+The value reflects what Domino currently holds in memory — the live in-memory state,
+not just what is on disk.
+
+**Note on scripting:** `nshini` itself writes nothing to stdout except the value.
+However, the Domino runtime may emit diagnostic messages to stderr during startup.
+When capturing the output in a script (`VALUE=$(nshini get VAR)`) this is usually
+fine since stderr is separate from stdout. Be aware that some environments may merge
+the two streams.
 
 ### stdin / stdout
 
@@ -280,7 +324,7 @@ standard Notepad++ install locations automatically and uses it if found.
 | Variable | Description |
 |-|-|
 | `nshini_editor` | Editor to use for `edit` command. Overrides `EDITOR` env var; can be overridden by an explicit command-line argument. |
-| `nshini_loglevel` | Log verbosity: `0` = none, `1` = normal (default), `2` = verbose, `3` = debug. |
+| `nshini_loglevel` | Log verbosity: `0` = none, `1` = normal (default), `2` = verbose, `3` = debug, `4` = developer (adds hex byte dumps). |
 | `nshini_backup` | Set to `1` to enable automatic `.bak` creation before editing. Default: `0` (disabled). |
 | `nshini_diff` | Diff tool for the `diff` command (Windows). `git` selects Git for Windows (uses its bundled `diff.exe` if found, otherwise `git --no-pager diff --no-index`), `wsl`, or a full path to any diff-compatible executable. Auto-detected if not set. |
 | `nshini_confirm` | Set to `1` to show a diff and prompt for confirmation before encoding changes back to LMBCS. Default: `0` (disabled). |
@@ -290,6 +334,7 @@ standard Notepad++ install locations automatically and uses it if found.
 | Flag | Description |
 |-|-|
 | `-debug` | Set log level to debug (overrides `nshini_loglevel`). |
+| `-developer` | Set log level to developer — like debug plus raw hex byte dumps for encoding diagnostics. |
 | `-verbose` | Set log level to verbose. |
 | `-silent` | Suppress all output. |
 | `-confirm` | Show diff and prompt for confirmation before applying (overrides `nshini_confirm`). |
@@ -328,6 +373,19 @@ No further steps are required. Add the Domino program directory to `PATH` if you
 - Uses `OSTranslate32` from the Domino C API for all character set conversion.
 - The `=<path>` argument injected by the Domino server runtime is automatically ignored for command parsing but used as the default notes.ini path.
 - Reads and writes files in binary mode to preserve exact byte content.
+
+### Windows: UTF-8 console output
+
+By default the Windows console uses a legacy code page that cannot display non-ASCII
+characters correctly. Any `nshini` output containing non-ASCII bytes will appear as
+garbled characters. Switch the console to UTF-8 before running `nshini`:
+
+```cmd
+chcp 65001
+```
+
+This affects the current console session only. To make it permanent, set the code page
+in the Windows Terminal profile or add the command to your shell startup script.
 
 
 ## Building
